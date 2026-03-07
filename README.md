@@ -157,6 +157,12 @@ docker compose up -d
 # → http://localhost:3000
 ```
 
+**To update an existing deployment:**
+```bash
+git pull
+docker compose up -d --build
+```
+
 > **🇨🇳 Docker Registry Mirror (China users):** If `docker compose up -d` fails with a timeout, configure a Docker registry mirror first:
 > ```bash
 > sudo tee /etc/docker/daemon.json > /dev/null <<EOF

@@ -149,6 +149,12 @@ docker compose up -d
 # → http://localhost:3000
 ```
 
+**更新已有部署：**
+```bash
+git pull
+docker compose up -d --build
+```
+
 > **🇨🇳 Docker 镜像加速（国内用户）：** 如果 `docker compose up -d` 拉取镜像失败或超时，请先配置 Docker 镜像加速源：
 > ```bash
 > sudo tee /etc/docker/daemon.json > /dev/null <<EOF

@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef, Component, ErrorInfo } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { agentApi, taskApi, fileApi, channelApi, enterpriseApi, activityApi, scheduleApi, skillApi, triggerApi, uploadFileWithProgress } from '../services/api';
-import MarkdownRenderer from '../components/MarkdownRenderer';
-import { useAuthStore } from '../stores';
-import PromptModal from '../components/PromptModal';
+
 import ConfirmModal from '../components/ConfirmModal';
-import FileBrowser from '../components/FileBrowser';
 import type { FileBrowserApi } from '../components/FileBrowser';
+import FileBrowser from '../components/FileBrowser';
+import MarkdownRenderer from '../components/MarkdownRenderer';
+import PromptModal from '../components/PromptModal';
+import { activityApi, agentApi, channelApi, enterpriseApi, fileApi, scheduleApi, skillApi, taskApi, triggerApi, uploadFileWithProgress } from '../services/api';
+import { useAuthStore } from '../stores';
 
 const TABS = ['status', 'aware', 'mind', 'tools', 'skills', 'relationships', 'workspace', 'chat', 'activityLog', 'settings'] as const;
 
@@ -742,6 +743,7 @@ function AgentDetailInner() {
                 setChatMessages(msgs.map((m: any) => parseChatMsg({
                     role: m.role, content: m.content,
                     ...(m.toolName && { toolName: m.toolName, toolArgs: m.toolArgs, toolStatus: m.toolStatus, toolResult: m.toolResult }),
+                    ...(m.thinking && { thinking: m.thinking }),
                 })));
             } else {
                 // Other user's session or agent-to-agent: read-only view
@@ -792,8 +794,9 @@ function AgentDetailInner() {
     const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
     const [chatInput, setChatInput] = useState('');
     const [wsConnected, setWsConnected] = useState(false);
-    const [chatWaiting, setChatWaiting] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [isWaiting, setIsWaiting] = useState(false);
+    const [isStreaming, setIsStreaming] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(-1);
     const [attachedFile, setAttachedFile] = useState<{ name: string; text: string; path?: string; imageUrl?: string } | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
@@ -891,13 +894,14 @@ function AgentDetailInner() {
     };
 
 
-    // Reset chat state whenever the viewed agent changes
+    // Reset state whenever the viewed agent changes
     useEffect(() => {
         setActiveSession(null);
         setChatMessages([]);
         setHistoryMsgs([]);
         setChatScope('mine');
         setAgentExpired(false);
+        settingsInitRef.current = false;
     }, [id]);
 
     useEffect(() => {
@@ -935,6 +939,12 @@ function AgentDetailInner() {
             ws.onerror = () => { if (!cancelled) setWsConnected(false); };
             ws.onmessage = (e) => {
                 const d = JSON.parse(e.data);
+                if (['thinking', 'chunk', 'tool_call', 'done', 'error', 'quota_exceeded'].includes(d.type)) {
+                    setIsWaiting(false);
+                    if (['thinking', 'chunk', 'tool_call'].includes(d.type)) setIsStreaming(true);
+                    if (['done', 'error', 'quota_exceeded'].includes(d.type)) setIsStreaming(false);
+                }
+
                 if (d.type === 'thinking') {
                     setChatMessages(prev => {
                         const last = prev[prev.length - 1];
@@ -960,7 +970,6 @@ function AgentDetailInner() {
                         return [...prev, { role: 'assistant', content: d.content, _streaming: true } as any];
                     });
                 } else if (d.type === 'done') {
-                    setChatWaiting(false);
                     setChatMessages(prev => {
                         const last = prev[prev.length - 1];
                         const thinking = (last && last.role === 'assistant' && (last as any)._streaming) ? last.thinking : undefined;
@@ -970,7 +979,6 @@ function AgentDetailInner() {
                     // Silently refresh session list to update last_message_at (no loading spinner)
                     fetchMySessions(true);
                 } else if (d.type === 'error' || d.type === 'quota_exceeded') {
-                    setChatWaiting(false);
                     const msg = d.content || d.detail || d.message || 'Request denied';
                     // Only add message if not a duplicate of the last one
                     setChatMessages(prev => {
@@ -1085,10 +1093,12 @@ function AgentDetailInner() {
                 userMsg = userMsg || `⌆ ${attachedFile.name}`;
             }
         }
+
+        setIsWaiting(true);
+        setIsStreaming(false);
         setChatMessages(prev => [...prev, { role: 'user', content: userMsg, fileName: attachedFile?.name, imageUrl: attachedFile?.imageUrl }]);
         wsRef.current.send(JSON.stringify({ content: contentForLLM, display_content: userMsg, file_name: attachedFile?.name || '' }));
         setChatInput(''); setAttachedFile(null);
-        setChatWaiting(true);
     };
 
     const handleChatFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2683,6 +2693,30 @@ function AgentDetailInner() {
                                                             const fi = fe === 'pdf' ? '📄' : (fe === 'csv' || fe === 'xlsx' || fe === 'xls') ? '📊' : (fe === 'docx' || fe === 'doc') ? '📝' : '📎';
                                                             return (
                                                                 <>
+                                                                    {m.thinking && (
+                                                                        <details style={{
+                                                                            marginBottom: '8px', fontSize: '12px',
+                                                                            background: 'rgba(147, 130, 220, 0.08)', borderRadius: '6px',
+                                                                            border: '1px solid rgba(147, 130, 220, 0.15)',
+                                                                        }}>
+                                                                            <summary style={{
+                                                                                padding: '6px 10px', cursor: 'pointer',
+                                                                                color: 'rgba(147, 130, 220, 0.9)', fontWeight: 500,
+                                                                                userSelect: 'none', display: 'flex', alignItems: 'center', gap: '4px',
+                                                                            }}>
+                                                                                💭 Thinking
+                                                                            </summary>
+                                                                            <div style={{
+                                                                                padding: '4px 10px 8px',
+                                                                                fontSize: '12px', lineHeight: '1.6',
+                                                                                color: 'var(--text-secondary)',
+                                                                                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                                                                maxHeight: '300px', overflow: 'auto',
+                                                                            }}>
+                                                                                {m.thinking}
+                                                                            </div>
+                                                                        </details>
+                                                                    )}
                                                                     {pm.fileName && (
                                                                         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', background: 'var(--bg-elevated)', borderRadius: '6px', padding: '4px 8px', marginBottom: pm.content ? '4px' : '0', fontSize: '11px', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}>
                                                                             <span>{fi}</span>
@@ -2782,7 +2816,7 @@ function AgentDetailInner() {
                                                     </div>
                                                 );
                                             })}
-                                            {chatWaiting && (
+                                            {isWaiting && (
                                                 <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', animation: 'fadeIn .2s ease' }}>
                                                     <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', flexShrink: 0, color: 'var(--text-secondary)', fontWeight: 600 }}>A</div>
                                                     <div style={{ padding: '8px 12px', borderRadius: '12px', background: 'var(--bg-secondary)', fontSize: '13px' }}>
@@ -2824,7 +2858,7 @@ function AgentDetailInner() {
                                         )}
                                         <div style={{ display: 'flex', gap: '8px', padding: '6px 12px', borderTop: '1px solid var(--border-subtle)' }}>
                                             <input type="file" ref={fileInputRef} onChange={handleChatFile} style={{ display: 'none' }} />
-                                            <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()} disabled={!wsConnected || uploading} style={{ padding: '6px 10px', fontSize: '14px', minWidth: 'auto' }}>{uploading ? '⏳' : '⦹'}</button>
+                                            <button className="btn btn-secondary" onClick={() => fileInputRef.current?.click()} disabled={!wsConnected || uploading || isWaiting || isStreaming} style={{ padding: '6px 10px', fontSize: '14px', minWidth: 'auto' }}>{uploading ? '⏳' : '⦹'}</button>
                                             {uploading && uploadProgress >= 0 && (
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: '0 0 120px' }}>
                                                     <div style={{ flex: 1, height: '4px', borderRadius: '2px', background: 'var(--bg-tertiary)', overflow: 'hidden' }}>
@@ -2837,8 +2871,8 @@ function AgentDetailInner() {
                                                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMsg(); } }}
                                                 onPaste={handlePaste}
                                                 placeholder={!wsConnected && (!activeSession?.user_id || !currentUser || activeSession.user_id === String(currentUser?.id)) ? 'Connecting...' : attachedFile ? t('agent.chat.askAboutFile', { name: attachedFile.name }) : t('chat.placeholder')}
-                                                disabled={!wsConnected} style={{ flex: 1 }} autoFocus />
-                                            <button className="btn btn-primary" onClick={sendChatMsg} disabled={!wsConnected || (!chatInput.trim() && !attachedFile)} style={{ padding: '6px 16px' }}>{t('chat.send')}</button>
+                                                disabled={!wsConnected || isWaiting || isStreaming} style={{ flex: 1 }} autoFocus />
+                                            <button className="btn btn-primary" onClick={sendChatMsg} disabled={!wsConnected || isWaiting || isStreaming || (!chatInput.trim() && !attachedFile)} style={{ padding: '6px 16px' }}>{t('chat.send')}</button>
                                         </div>
                                     </>
                                 )}

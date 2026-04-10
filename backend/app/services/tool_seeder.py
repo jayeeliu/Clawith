@@ -310,7 +310,7 @@ BUILTIN_TOOLS = [
     {
         "name": "web_search",
         "display_name": "Web Search",
-        "description": "Search the internet using a configurable search engine. Supports DuckDuckGo (free), Tavily, Google, Bing, and Tencent Cloud AI Search. Configure the search engine in the tool settings.",
+        "description": "Search the internet using a configurable search engine. Supports DuckDuckGo (free), Tavily, Google, Bing, and Tencent Cloud WSA. Configure the search engine in the tool settings.",
         "category": "search",
         "icon": "🔍",
         "is_default": True,
@@ -339,7 +339,7 @@ BUILTIN_TOOLS = [
                         {"value": "tavily", "label": "Tavily (AI search, needs API key)"},
                         {"value": "google", "label": "Google Custom Search (needs API key)"},
                         {"value": "bing", "label": "Bing Search API (needs API key)"},
-                        {"value": "tencentcloud", "label": "Tencent Cloud AI Search (needs SecretId/SecretKey/BotId)"},
+                        {"value": "tencentcloud", "label": "Tencent Cloud Web Search (needs SecretId/SecretKey)"},
                     ],
                     "default": "duckduckgo",
                 },
@@ -365,14 +365,6 @@ BUILTIN_TOOLS = [
                     "type": "password",
                     "default": "",
                     "placeholder": "Tencent Cloud API SecretKey",
-                    "depends_on": {"search_engine": ["tencentcloud"]},
-                },
-                {
-                    "key": "tencent_bot_id",
-                    "label": "Tencent Cloud BotId",
-                    "type": "text",
-                    "default": "",
-                    "placeholder": "Knowledge Engine Bot ID",
                     "depends_on": {"search_engine": ["tencentcloud"]},
                 },
                 {

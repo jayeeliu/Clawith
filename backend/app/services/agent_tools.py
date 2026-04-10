@@ -2364,6 +2364,13 @@ async def _web_search(arguments: dict, agent_id: uuid.UUID | None = None) -> str
             return await _search_google(query, api_key, max_results, language)
         elif engine == "bing" and api_key:
             return await _search_bing(query, api_key, max_results, language)
+        elif engine == "tencentcloud":
+            secret_id = config.get("tencent_secret_id", "")
+            secret_key = config.get("tencent_secret_key", "")
+            bot_id = config.get("tencent_bot_id", "")
+            if secret_id and secret_key and bot_id:
+                return await _search_tencentcloud(query, secret_id, secret_key, bot_id, max_results)
+            return "❌ Tencent Cloud AI Search requires SecretId, SecretKey, and BotId configuration"
         else:
             return await _search_duckduckgo(query, max_results)
     except Exception as e:
@@ -2584,6 +2591,122 @@ async def _search_bing(query: str, api_key: str, max_results: int, language: str
     if not results:
         return f'🔍 No results found for "{query}"'
     return f'🔍 Bing search for "{query}" ({len(results)} items):\n\n' + "\n\n---\n\n".join(results)
+
+
+async def _search_tencentcloud(query: str, secret_id: str, secret_key: str, bot_id: str, max_results: int) -> str:
+    """Search via Tencent Cloud Knowledge Engine AI Search API (SearchChats)."""
+    import httpx
+    import hashlib
+    import hmac
+    import time
+    from urllib.parse import urlencode, quote
+
+    # Tencent Cloud API common parameters
+    endpoint = "lkeap.tencentcloudapi.com"
+    service = "lkeap"
+    region = ""
+    action = "SearchChats"
+    version = "2024-05-22"
+    algorithm = "TC3-HMAC-SHA256"
+    timestamp = int(time.time())
+    date = time.strftime("%Y-%m-%d", time.gmtime(timestamp))
+
+    # Request body
+    payload = {
+        "BotId": bot_id,
+        "Query": query,
+        "TopK": max_results,
+    }
+    payload_str = __import__("json").dumps(payload)
+
+    # Step 1: Build canonical request
+    http_request_method = "POST"
+    canonical_uri = "/"
+    canonical_querystring = ""
+    ct = "application/json"
+    canonical_headers = f"content-type:{ct}\nhost:{endpoint}\n"
+    signed_headers = "content-type;host"
+    hashed_request_payload = hashlib.sha256(payload_str.encode("utf-8")).hexdigest()
+    canonical_request = (
+        http_request_method + "\n" +
+        canonical_uri + "\n" +
+        canonical_querystring + "\n" +
+        canonical_headers + "\n" +
+        signed_headers + "\n" +
+        hashed_request_payload
+    )
+
+    # Step 2: Build string to sign
+    credential_scope = f"{date}/{service}/tc3_request"
+    hashed_canonical_request = hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()
+    string_to_sign = (
+        algorithm + "\n" +
+        str(timestamp) + "\n" +
+        credential_scope + "\n" +
+        hashed_canonical_request
+    )
+
+    # Step 3: Calculate signature
+    def sign(key, msg):
+        return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
+
+    secret_date = sign(("TC3" + secret_key).encode("utf-8"), date)
+    secret_service = sign(secret_date, service)
+    secret_signing = sign(secret_service, "tc3_request")
+    signature = hmac.new(secret_signing, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    # Step 4: Build authorization header
+    authorization = (
+        algorithm + " " +
+        "Credential=" + secret_id + "/" + credential_scope + ", " +
+        "SignedHeaders=" + signed_headers + ", " +
+        "Signature=" + signature
+    )
+
+    headers = {
+        "Authorization": authorization,
+        "Content-Type": ct,
+        "Host": endpoint,
+        "X-TC-Action": action,
+        "X-TC-Timestamp": str(timestamp),
+        "X-TC-Version": version,
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"https://{endpoint}",
+                content=payload_str,
+                headers=headers,
+                timeout=15,
+            )
+            data = resp.json()
+
+        # Parse response
+        response = data.get("Response", {})
+        if "Error" in response:
+            return f"❌ Tencent Cloud search error: {response['Error'].get('Message', str(response['Error']))}"
+
+        results = []
+        records = response.get("Records", [])
+        for i, record in enumerate(records[:max_results], 1):
+            content = record.get("Content", "")
+            source = record.get("DocName", "") or record.get("Source", "")
+            score = record.get("Score", 0)
+
+            result_text = f"**{i}. Relevance: {score:.2f}**"
+            if source:
+                result_text += f"\nSource: {source}"
+            result_text += f"\n{content[:500]}"
+            results.append(result_text)
+
+        if not results:
+            return f'🔍 Tencent Cloud AI Search found no results for "{query}"'
+
+        return f'🔍 Tencent Cloud AI Search results for "{query}" ({len(results)} items):\n\n' + "\n\n---\n\n".join(results)
+
+    except Exception as e:
+        return f"❌ Tencent Cloud search error: {str(e)[:300]}"
 
 
 async def _send_channel_file(agent_id: uuid.UUID, ws: Path, arguments: dict) -> str:
